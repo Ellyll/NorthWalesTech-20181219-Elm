@@ -6,9 +6,7 @@ import Regex
 import Json.Decode exposing (Decoder, field, string, decodeString)
 
 
-
 -- MAIN
-
 
 main =
   Browser.element
@@ -22,9 +20,8 @@ main =
 
 -- MODEL
 
-
 type Model
-  = Failure Http.Error
+  = Failure String
   | Loading
   | Success String
 
@@ -34,8 +31,8 @@ init _ =
   ( Loading
   , Http.request
       { method = "GET"
-      , headers = [ Http.header "Access-Control-Request-Method" "GET" ] --[ Http.header "Access-Control-Allow-Origin" "http://localhost:8000" ]
-      , url = "https://oriel.madarch.org/NorthWalesTech20181219/" -- "https://pastebin.com/raw/KzwWFYJL"
+      , headers = [ ]
+      , url = "https://oriel.madarch.org/NorthWalesTech20181219/" -- Can't use "https://pastebin.com/raw/KzwWFYJL" due to CORS
       , body = Http.emptyBody
       , expect = Http.expectString GotText
       , timeout = Nothing
@@ -43,41 +40,8 @@ init _ =
       }
   )
 
-extractCode : String -> Maybe String
-extractCode str =
-  if (String.startsWith "START:" str) && (String.endsWith ":END" str) then
-    str |> String.slice 6 -4 |> Just
-  else
-    Nothing
-
-decodeCode : String -> Maybe String
-decodeCode str =
-  case Base64.decode str of
-    (Result.Ok decodedStr) -> Just decodedStr
-    _ -> Nothing
-
-msgDecoder : Decoder String
-msgDecoder =
-  field "msg" string
-
-extractMsg : String -> Maybe String
-extractMsg str =
-  case decodeString msgDecoder str of
-    Result.Ok msg -> Just msg
-    _ -> Nothing
-
-doStuff : List (String -> Maybe String) -> String -> Maybe String
-doStuff funcs str =
-  case funcs of
-   [] -> Just str
-   fn::remaining ->
-    case fn str of
-      Nothing -> Nothing
-      Just newStr -> doStuff remaining newStr
-
 
 -- UPDATE
-
 
 type Msg
   = GotText (Result Http.Error String)
@@ -89,32 +53,40 @@ update msg model =
     GotText result ->
       case result of
         Ok fullText ->
-            case doStuff [ extractCode, decodeCode, extractMsg ] fullText of
-              Nothing -> (Success "Unable to decode", Cmd.none)
-              Just decodedMessage -> (Success decodedMessage, Cmd.none)
-            --case (extractCode fullText) of
-            -- Just s ->
-            --   case (decodeCode s) of
-            --     Just decoded -> (Success decoded, Cmd.none)
-            --     Nothing -> (Success s, Cmd.none)
-            -- Nothing ->              
-            --   (Success fullText, Cmd.none)
-
+          case extractCode fullText of
+            Ok codeStr ->
+              case decodeCode codeStr of
+                Ok jsonStr ->
+                  case extractMsg jsonStr of
+                    Ok msgStr -> (Success msgStr, Cmd.none)
+                    Err errStr -> (Failure errStr, Cmd.none)
+                Err errStr -> (Failure errStr, Cmd.none)
+            Err errStr -> (Failure errStr, Cmd.none)
         Err failure ->
-          (Failure failure, Cmd.none)
+          (Failure (errorText failure), Cmd.none)
 
 
+extractCode : String -> Result String String
+extractCode str =
+  if (String.startsWith "START:" str) && (String.endsWith ":END" str) then
+    Ok (str |> String.slice 6 -4)
+  else
+    Err <| "Unable to extract code from " ++ str
 
--- SUBSCRIPTIONS
+decodeCode : String -> Result String String
+decodeCode str =
+  Base64.decode str
 
+extractMsg : String -> Result String String
+extractMsg str =
+  case decodeString msgDecoder str of
+    Ok value -> Ok value
+    Err _ -> Err "Unable to decode JSON"
 
-subscriptions : Model -> Sub Msg
-subscriptions model =
-  Sub.none
+msgDecoder : Decoder String
+msgDecoder =
+  field "msg" string
 
-
-
--- VIEW
 errorText : Http.Error -> String
 errorText err =
   case err of
@@ -124,11 +96,22 @@ errorText err =
     Http.BadStatus i -> "BadStatus " ++ String.fromInt i
     Http.BadBody str -> "BadBody " ++ str
 
+
+
+-- SUBSCRIPTIONS
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+  Sub.none
+
+
+-- VIEW
+
 view : Model -> Html Msg
 view model =
   case model of
     Failure failure ->
-      pre [] [ text (errorText failure) ]
+      pre [] [ text failure ]
 
     Loading ->
       text "Loading..."
